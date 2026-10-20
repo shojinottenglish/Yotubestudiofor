@@ -1,0 +1,1236 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>ShortsStudio Pro Lite</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@700;900&family=Dela+Gothic+One&family=Yusei+Magic&family=M+PLUS+Rounded+1c:wght@900&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+    <style>
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .canvas-container {
+            aspect-ratio: 9 / 16;
+            max-width: 100%;
+            max-height: 100%;
+            position: relative;
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
+            background-color: #18181b;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+        #mainCanvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            touch-action: none;
+            cursor: grab;
+        }
+        #mainCanvas:active {
+            cursor: grabbing;
+        }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        .pulse-record {
+            animation: pulse-red 1.5s infinite;
+        }
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+    </style>
+</head>
+<body class="bg-zinc-950 text-white flex flex-col h-[100dvh] overflow-hidden">
+
+    <video id="webcam" playsinline webkit-playsinline autoplay muted style="position:fixed;top:-9999px;left:-9999px;width:2px;height:2px;opacity:0.01;pointer-events:none;"></video>
+
+    <!-- ヘッダー -->
+    <header class="h-14 shrink-0 flex justify-between items-center px-4 border-b border-zinc-800 bg-zinc-950 z-10">
+        <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-lg bg-red-600 flex items-center justify-center shadow-lg shadow-red-600/20">
+                <i class="fa-brands fa-youtube text-white"></i>
+            </div>
+            <h1 class="text-sm font-black tracking-tight">ShortsStudio <span class="text-red-500">Pro</span></h1>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="flipCamera()" class="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center active:scale-95 transition" title="カメラ切り替え">
+                <i class="fa-solid fa-camera-rotate"></i>
+            </button>
+            <button onclick="toggleCamera()" id="btnToggleCam" class="px-4 py-2 rounded-full bg-emerald-600 font-bold text-xs active:scale-95 transition shadow-lg shadow-emerald-600/20">
+                カメラON
+            </button>
+        </div>
+    </header>
+
+    <!-- メインキャンバス領域 -->
+    <main class="flex-1 min-h-0 flex justify-center items-center p-3 relative" id="stageArea">
+        <div class="canvas-container" id="canvasWrapper">
+            <canvas id="mainCanvas" width="720" height="1280"></canvas>
+            
+            <!-- 録画中のインジケーター -->
+            <div id="recBadge" class="hidden absolute top-4 left-4 bg-red-600 text-white text-xs font-black px-3 py-1.5 rounded-full flex items-center gap-2 shadow-lg pointer-events-none">
+                <div class="w-2.5 h-2.5 bg-white rounded-full animate-ping"></div>
+                <span id="recTimer">00:00</span>
+            </div>
+
+            <!-- スマホ用 親指クイック操作バー（録画中は自動で隠れます） -->
+            <div id="quickTouchControls" class="absolute right-2.5 top-1/2 -translate-y-1/2 flex flex-col gap-2 z-10">
+                <button onclick="stepCameraZoom(0.15)" class="w-10 h-10 rounded-full bg-black/65 border border-zinc-600 text-white flex items-center justify-center active:scale-90 shadow-lg" title="ズームイン">
+                    <i class="fa-solid fa-magnifying-glass-plus text-sm"></i>
+                </button>
+                <div id="quickZoomBadge" class="bg-black/70 text-emerald-400 text-[10px] font-mono font-bold text-center py-1 px-1.5 rounded-md border border-zinc-700 pointer-events-none">
+                    100%
+                </div>
+                <button onclick="stepCameraZoom(-0.15)" class="w-10 h-10 rounded-full bg-black/65 border border-zinc-600 text-white flex items-center justify-center active:scale-90 shadow-lg" title="ズームアウト（引き）">
+                    <i class="fa-solid fa-magnifying-glass-minus text-sm"></i>
+                </button>
+                <button onclick="quickTogglePip()" id="quickPipBtn" class="w-10 h-10 rounded-full bg-blue-600/85 border border-blue-400 text-white flex flex-col items-center justify-center active:scale-90 shadow-lg mt-1" title="全画面 / 小窓切替">
+                    <i class="fa-solid fa-clone text-xs"></i>
+                    <span id="quickPipLabel" class="text-[8px] font-bold leading-none mt-0.5">全画面</span>
+                </button>
+                <button onclick="resetCameraTransform()" class="w-10 h-10 rounded-full bg-black/65 border border-zinc-600 text-zinc-200 flex flex-col items-center justify-center active:scale-90 shadow-lg" title="位置リセット">
+                    <i class="fa-solid fa-arrows-to-dot text-xs"></i>
+                    <span class="text-[8px] font-bold leading-none mt-0.5">中央</span>
+                </button>
+                <button onclick="openPanel('text', '文字・フォント・色')" class="w-10 h-10 rounded-full bg-yellow-500/90 border border-yellow-300 text-black flex flex-col items-center justify-center active:scale-90 shadow-lg mt-1" title="文字を追加">
+                    <i class="fa-solid fa-font text-xs"></i>
+                    <span class="text-[8px] font-black leading-none mt-0.5">文字</span>
+                </button>
+            </div>
+
+            <!-- 操作ヒント -->
+            <div class="absolute bottom-3 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-sm text-zinc-200 text-[10px] font-bold px-3 py-1 rounded-full pointer-events-none whitespace-nowrap">
+                1本指ドラッグで位置移動 / 2本指ピンチで拡大・縮小
+            </div>
+        </div>
+    </main>
+
+    <!-- 設定パネル領域 -->
+    <div id="panelArea" class="hidden h-72 shrink-0 bg-zinc-900 rounded-t-2xl border-t border-zinc-700 shadow-[0_-10px_40px_rgba(0,0,0,0.5)] z-20 flex flex-col transition-all">
+        <!-- 閉じるボタン＆タイトル -->
+        <div class="flex justify-between items-center px-4 py-2 border-b border-zinc-800 shrink-0">
+            <h2 id="panelTitle" class="font-bold text-sm">設定</h2>
+            <button onclick="closePanel()" class="w-8 h-8 rounded-full bg-zinc-800 flex items-center justify-center active:scale-95">
+                <i class="fa-solid fa-xmark text-zinc-400"></i>
+            </button>
+        </div>
+        
+        <!-- パネルコンテンツ -->
+        <div class="flex-1 overflow-y-auto p-4 no-scrollbar">
+            
+            <!-- 【1】人物パネル -->
+            <div id="panel-person" class="tab-content hidden space-y-3">
+                <div class="bg-zinc-800 p-3 rounded-xl flex items-center justify-between">
+                    <span class="font-bold text-xs sm:text-sm"><i class="fa-solid fa-user-check text-emerald-400 mr-2"></i>人物のみ切り抜く (AI自動背景透過)</span>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="bgRemovalToggle" checked onchange="toggleBgRemoval(this.checked)" class="sr-only peer">
+                        <div class="w-11 h-6 bg-zinc-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+                    </label>
+                </div>
+                
+                <!-- モード切替 -->
+                <div class="grid grid-cols-2 gap-2.5">
+                    <button onclick="setPersonMode('full')" id="btnModeFull" class="py-2.5 rounded-xl bg-blue-600 font-bold text-xs sm:text-sm border-2 border-blue-400 shadow-lg text-white">全画面モード</button>
+                    <button onclick="setPersonMode('pip')" id="btnModePip" class="py-2.5 rounded-xl bg-zinc-800 font-bold text-xs sm:text-sm text-zinc-300 border-2 border-transparent hover:bg-zinc-700">小窓モード (PiP)</button>
+                </div>
+
+                <!-- 小窓の形（真四角・丸・縦長） -->
+                <div id="pipShapeOptions" class="hidden space-y-2 bg-zinc-800/80 p-2.5 rounded-xl border border-zinc-700">
+                    <div class="flex justify-between items-center">
+                        <span class="text-xs font-bold text-zinc-300">小窓の形</span>
+                        <label class="flex items-center gap-1.5 text-xs text-zinc-300 cursor-pointer">
+                            <input type="checkbox" id="pipBorderToggle" checked onchange="state.person.pipBorder = this.checked" class="accent-blue-500">
+                            枠線を表示
+                        </label>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2">
+                        <button onclick="setPipShape('square')" id="btnShapeSq" class="py-2 rounded-lg bg-blue-600 border-2 border-blue-400 text-xs font-bold shadow text-white">□ 真四角</button>
+                        <button onclick="setPipShape('circle')" id="btnShapeCirc" class="py-2 rounded-lg bg-zinc-900 border-2 border-transparent hover:bg-zinc-700 text-xs font-bold text-zinc-300">〇 丸</button>
+                        <button onclick="setPipShape('rectangle')" id="btnShapeRect" class="py-2 rounded-lg bg-zinc-900 border-2 border-transparent hover:bg-zinc-700 text-xs font-bold text-zinc-300">▯ 縦長</button>
+                    </div>
+                    <!-- 小窓自体のサイズスライダー -->
+                    <div class="pt-1 space-y-1">
+                        <div class="flex justify-between text-xs text-zinc-300">
+                            <span>小窓の枠サイズ</span>
+                            <span id="pipSizeValue" class="font-mono text-blue-400">45%</span>
+                        </div>
+                        <input type="range" id="pipSizeSlider" min="0.2" max="0.9" step="0.02" value="0.45" oninput="updatePipSize(this.value)" class="w-full accent-blue-500">
+                    </div>
+                </div>
+
+                <!-- カメラのズーム＆パン（位置リセット付き） -->
+                <div class="bg-zinc-800 p-3 rounded-xl space-y-2">
+                    <div class="flex justify-between items-center text-xs text-zinc-300">
+                        <span id="zoomLabelText" class="font-bold">カメラのズーム (引き ⇔ 寄り)</span>
+                        <div class="flex items-center gap-2">
+                            <span id="zoomValue" class="font-mono text-emerald-400">100%</span>
+                            <button onclick="resetCameraTransform()" class="px-2 py-0.5 rounded bg-zinc-700 hover:bg-zinc-600 text-[10px] font-bold text-white">位置・ズーム初期化</button>
+                        </div>
+                    </div>
+                    <input type="range" id="personZoom" min="0.25" max="3.0" step="0.05" value="1.0" oninput="updateCameraZoom(this.value)" class="w-full accent-emerald-500">
+                    <p class="text-[10px] text-zinc-400 text-center">※ スマホ画面を2本指でピンチしてズーム、1本指ドラッグで位置移動できます</p>
+                </div>
+            </div>
+
+            <!-- 【2】背景AIパネル -->
+            <div id="panel-bg" class="tab-content hidden space-y-3">
+                <div class="space-y-1.5">
+                    <label class="text-xs sm:text-sm font-bold"><i class="fa-solid fa-wand-magic-sparkles text-purple-400 mr-1.5"></i>どんな背景にしたいですか？</label>
+                    <textarea id="bgPrompt" rows="2" placeholder="例: 近未来のサイバーパンクな渋谷、おしゃれなカフェ、宇宙空間..." class="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-2.5 text-sm text-white focus:outline-none focus:border-purple-500 resize-none"></textarea>
+                </div>
+                <button onclick="generateAIBackground()" id="btnGenBg" class="w-full py-3 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 font-black text-sm shadow-lg shadow-purple-500/30 active:scale-95 transition flex justify-center items-center gap-2">
+                    <i class="fa-solid fa-image"></i> AIで背景を生成する
+                </button>
+                
+                <div class="flex gap-2">
+                    <button onclick="clearBackground()" class="flex-1 py-2 rounded-lg bg-zinc-800 text-xs font-bold text-zinc-300 active:bg-zinc-700">背景をリセット</button>
+                    <button onclick="document.getElementById('bgUploadInput').click()" class="flex-1 py-2 rounded-lg bg-zinc-800 text-xs font-bold text-zinc-300 active:bg-zinc-700"><i class="fa-solid fa-folder-open mr-1"></i> 画像読込</button>
+                    <input type="file" id="bgUploadInput" accept="image/*" class="hidden" onchange="uploadLocalBackground(event)">
+                </div>
+            </div>
+
+            <!-- 【3】テキストパネル -->
+            <div id="panel-text" class="tab-content hidden space-y-3">
+                <div class="space-y-2 bg-zinc-800/90 p-3 rounded-xl border border-yellow-500/40">
+                    <label class="block text-xs font-black text-yellow-400">
+                        <i class="fa-solid fa-pen mr-1"></i> 画面に出す文字を入力（入力するとすぐ画面に出ます）
+                    </label>
+                    <input type="text" id="textInput" oninput="liveTypePreview(this.value)" onkeydown="if(event.key==='Enter'){addText();}" placeholder="ここをタップして文字を入力..." class="w-full min-w-0 bg-zinc-950 border-2 border-zinc-600 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:border-yellow-400">
+                    <button onclick="addText()" class="w-full py-3 rounded-xl bg-yellow-400 hover:bg-yellow-300 text-black font-black text-sm active:scale-95 transition shadow-lg shadow-yellow-500/30 flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-circle-plus text-base"></i> ＋ この文字を画面に追加（決定）
+                    </button>
+                </div>
+
+                <div class="bg-zinc-800 p-3 rounded-xl grid grid-cols-2 gap-3 text-sm">
+                    <div class="space-y-1">
+                        <label class="text-[10px] text-zinc-400 font-bold">フォント</label>
+                        <select id="fontSelect" onchange="updateSelectedTextStyle()" class="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-white">
+                            <option value="Dela Gothic One">極太ゴシック</option>
+                            <option value="M PLUS Rounded 1c">丸ゴシック</option>
+                            <option value="Yusei Magic">手書き風</option>
+                            <option value="Noto Sans JP">標準ゴシック</option>
+                        </select>
+                    </div>
+                    <div class="flex justify-between items-center pt-4">
+                        <label class="flex items-center gap-1.5 text-xs font-bold cursor-pointer">
+                            文字 <input type="color" id="textColor" value="#ffffff" oninput="updateSelectedTextStyle()" class="w-6 h-6 rounded cursor-pointer border-0 p-0 bg-transparent">
+                        </label>
+                        <label class="flex items-center gap-1.5 text-xs font-bold cursor-pointer">
+                            フチ <input type="color" id="strokeColor" value="#000000" oninput="updateSelectedTextStyle()" class="w-6 h-6 rounded cursor-pointer border-0 p-0 bg-transparent">
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="bg-zinc-800 p-2.5 rounded-xl flex items-center gap-3">
+                    <span class="text-xs text-zinc-400 font-bold shrink-0">文字サイズ</span>
+                    <input type="range" id="textSizeSlider" min="32" max="110" value="60" oninput="updateSelectedTextStyle()" class="w-full accent-yellow-500">
+                </div>
+
+                <button onclick="clearTexts()" class="w-full py-2 rounded-lg border border-red-500/50 text-red-400 text-xs font-bold active:bg-red-500/20">すべての文字を消去</button>
+            </div>
+
+            <!-- 【4】音声パネル -->
+            <div id="panel-voice" class="tab-content hidden space-y-3">
+                <div class="bg-zinc-800 p-4 rounded-xl flex items-center justify-between border border-cyan-500/30">
+                    <div class="space-y-1">
+                        <div class="font-black text-sm text-cyan-300"><i class="fa-solid fa-comment-dots mr-1"></i> 自動音声字幕 (ライブ文字起こし)</div>
+                        <div class="text-[10px] text-zinc-400">話した言葉がリアルタイムで画面下に字幕表示されます</div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="liveCaptionToggle" onchange="toggleSpeechRecognition(this.checked)" class="sr-only peer">
+                        <div class="w-11 h-6 bg-zinc-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-500"></div>
+                    </label>
+                </div>
+                <div class="bg-zinc-800 p-3 rounded-xl space-y-1">
+                    <p class="text-xs font-bold text-zinc-300">音声字幕にも「文字」タブの色・フォント設定が反映されます</p>
+                    <p class="text-[10px] text-zinc-500">※ ChromeやSafariなどの音声認識対応ブラウザでご利用ください。</p>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ボトムナビゲーション -->
+    <footer class="h-[76px] shrink-0 bg-zinc-950 flex items-center justify-evenly pb-safe border-t border-zinc-800 z-30 relative px-2">
+        <button onclick="openPanel('person', '人物・ズーム・小窓設定')" class="flex flex-col items-center justify-center w-16 h-full text-zinc-400 hover:text-white active:scale-90 transition">
+            <i class="fa-solid fa-user text-xl mb-1"></i>
+            <span class="text-[10px] font-bold">人物</span>
+        </button>
+        <button onclick="openPanel('bg', 'AI背景生成')" class="flex flex-col items-center justify-center w-16 h-full text-zinc-400 hover:text-white active:scale-90 transition">
+            <i class="fa-solid fa-image text-xl mb-1"></i>
+            <span class="text-[10px] font-bold">背景AI</span>
+        </button>
+        
+        <!-- 中央の録画ボタン -->
+        <div class="relative -top-4">
+            <button id="recordBtn" onclick="toggleRecording()" class="w-16 h-16 rounded-full bg-zinc-900 border-4 border-zinc-800 flex items-center justify-center shadow-xl active:scale-95 transition-transform duration-200">
+                <div id="recordInner" class="w-12 h-12 rounded-full bg-red-600 transition-all duration-300"></div>
+            </button>
+        </div>
+
+        <button onclick="openPanel('text', '文字・フォント・色')" class="flex flex-col items-center justify-center w-16 h-full text-zinc-400 hover:text-white active:scale-90 transition">
+            <i class="fa-solid fa-font text-xl mb-1"></i>
+            <span class="text-[10px] font-bold">文字</span>
+        </button>
+        <button onclick="openPanel('voice', '音声入力・自動字幕')" class="flex flex-col items-center justify-center w-16 h-full text-zinc-400 hover:text-white active:scale-90 transition">
+            <i class="fa-solid fa-microphone text-xl mb-1"></i>
+            <span class="text-[10px] font-bold">音声字幕</span>
+        </button>
+    </footer>
+
+    <!-- 録画完了モーダル -->
+    <div id="exportModal" class="hidden fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="bg-zinc-900 border border-zinc-700 rounded-3xl p-6 w-full max-w-sm flex flex-col items-center gap-4 text-center shadow-2xl">
+            <h2 class="text-xl font-black text-white">🎬 撮影完了！</h2>
+            <p class="text-xs text-zinc-400">プレビューを確認して保存してください</p>
+            <div class="w-48 aspect-[9/16] bg-black rounded-xl overflow-hidden border border-zinc-700">
+                <video id="previewVideo" class="w-full h-full object-cover" controls loop playsinline autoplay></video>
+            </div>
+            <a id="downloadBtn" href="#" download="ShortsVideo.webm" class="w-full py-3.5 rounded-xl bg-blue-600 text-white font-bold text-sm shadow-lg active:scale-95 transition flex justify-center items-center gap-2 mt-2">
+                <i class="fa-solid fa-download"></i> 動画ファイルを保存
+            </a>
+            <button onclick="document.getElementById('exportModal').classList.add('hidden')" class="w-full py-2.5 rounded-xl bg-zinc-800 text-zinc-300 text-xs font-bold active:bg-zinc-700">
+                スタジオに戻る
+            </button>
+        </div>
+    </div>
+
+    <!-- 通知トースト -->
+    <div id="toast" class="fixed top-20 left-1/2 -translate-x-1/2 bg-zinc-800/95 border border-zinc-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg opacity-0 transition-opacity duration-300 pointer-events-none z-50 whitespace-nowrap">
+        通知メッセージ
+    </div>
+
+    <script>
+        const apiKey = ""; // Environment injects API key
+
+        const state = {
+            cameraActive: false,
+            facingMode: 'user',
+            isRecording: false,
+            recordStartTime: 0,
+            
+            // 人物・カメラ状態
+            person: {
+                useBgRemoval: true,
+                mode: 'full',       // 'full' (全画面) or 'pip' (小窓)
+                shape: 'square',    // 'square' (真四角), 'circle' (丸), 'rectangle' (縦長)
+                pipBorder: true,    // 小窓の枠線
+                zoom: 1.0,          // カメラのズーム (0.25 〜 3.0)
+                panX: 0,            // カメラのパンオフセットX
+                panY: 0,            // カメラのパンオフセットY
+                pipScale: 0.45,     // 小窓自体のサイズ (0.2 〜 0.9)
+                pipX: 520,          // 小窓の中心X座標
+                pipY: 940           // 小窓の中心Y座標
+            },
+            
+            // 背景画像
+            bgImage: null,
+            
+            // テキスト要素
+            texts: [],
+            selectedTextIdx: -1,
+            
+            // 音声字幕
+            speechEnabled: false,
+            liveCaption: "",
+            captionTimer: null,
+            recognizer: null
+        };
+
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const videoEl = document.getElementById('webcam');
+        
+        // カメラ映像とマスクを合成するオフスクリーンキャンバス
+        const rawPersonCanvas = document.createElement('canvas');
+        const rawPersonCtx = rawPersonCanvas.getContext('2d');
+
+        // MediaPipeのマスクを保持する専用キャンバス（WebGLテクスチャ消失防止）
+        const maskCanvas = document.createElement('canvas');
+        const maskCtx = maskCanvas.getContext('2d');
+
+        // スマホAI負荷軽減＆連続切り抜き用の軽量入力キャンバス
+        const segInputCanvas = document.createElement('canvas');
+        segInputCanvas.width = 288;
+        segInputCanvas.height = 512;
+        const segInputCtx = segInputCanvas.getContext('2d');
+
+        let segmenter = null;
+        let hasMask = false;
+        let isSegmenting = false;
+        let lastSegmentTime = 0;
+
+        function showToast(msg) {
+            const t = document.getElementById('toast');
+            t.textContent = msg;
+            t.style.opacity = '1';
+            clearTimeout(window._toastTimer);
+            window._toastTimer = setTimeout(() => { t.style.opacity = '0'; }, 2600);
+        }
+
+        let currentPanel = null;
+        function openPanel(id, title) {
+            const panelArea = document.getElementById('panelArea');
+            if (currentPanel === id && !panelArea.classList.contains('hidden')) {
+                closePanel();
+                return;
+            }
+            panelArea.classList.remove('hidden');
+            document.getElementById('panelTitle').textContent = title;
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`panel-${id}`).classList.remove('hidden');
+            currentPanel = id;
+        }
+
+        function closePanel() {
+            document.getElementById('panelArea').classList.add('hidden');
+            currentPanel = null;
+        }
+
+        async function initSegmenterIfNeeded() {
+            if (segmenter || !window.SelfieSegmentation) return;
+            try {
+                segmenter = new window.SelfieSegmentation({
+                    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
+                });
+                segmenter.setOptions({ modelSelection: 1 });
+                segmenter.onResults((results) => {
+                    if (results && results.segmentationMask) {
+                        const mw = results.segmentationMask.width || 288;
+                        const mh = results.segmentationMask.height || 512;
+                        if (maskCanvas.width !== mw || maskCanvas.height !== mh) {
+                            maskCanvas.width = mw;
+                            maskCanvas.height = mh;
+                        }
+                        maskCtx.clearRect(0, 0, mw, mh);
+                        maskCtx.drawImage(results.segmentationMask, 0, 0, mw, mh);
+                        hasMask = true;
+                    }
+                    isSegmenting = false;
+                });
+                await segmenter.initialize();
+            } catch (e) {
+                console.warn("MediaPipe init error:", e);
+                isSegmenting = false;
+            }
+        }
+
+        function processSegmentationFrame() {
+            if (!state.cameraActive || !state.person.useBgRemoval || !segmenter || isSegmenting) return;
+            if (videoEl.readyState < 2 || videoEl.videoWidth === 0) return;
+
+            isSegmenting = true;
+            lastSegmentTime = performance.now();
+            try {
+                segInputCtx.clearRect(0, 0, 288, 512);
+                segInputCtx.drawImage(videoEl, 0, 0, 288, 512);
+                segmenter.send({ image: segInputCanvas }).catch(() => {
+                    isSegmenting = false;
+                });
+            } catch (e) {
+                isSegmenting = false;
+            }
+        }
+
+        async function toggleCamera() {
+            if (state.cameraActive) {
+                if (videoEl.srcObject) {
+                    videoEl.srcObject.getTracks().forEach(t => t.stop());
+                    videoEl.srcObject = null;
+                }
+                state.cameraActive = false;
+                const btn = document.getElementById('btnToggleCam');
+                btn.textContent = 'カメラON';
+                btn.className = 'px-4 py-2 rounded-full bg-emerald-600 font-bold text-xs active:scale-95 transition shadow-lg shadow-emerald-600/20';
+                showToast('カメラを停止しました');
+                return;
+            }
+            await startCamera();
+        }
+
+        function flipCamera() {
+            state.facingMode = state.facingMode === 'user' ? 'environment' : 'user';
+            if (state.cameraActive) {
+                startCamera();
+            }
+            showToast(state.facingMode === 'user' ? 'インカメラに切り替え' : 'アウトカメラに切り替え');
+        }
+
+        async function startCamera() {
+            try {
+                if (videoEl.srcObject) {
+                    videoEl.srcObject.getTracks().forEach(t => t.stop());
+                }
+                
+                let stream = null;
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: { ideal: state.facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } },
+                        audio: true
+                    });
+                } catch (audioErr) {
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: { ideal: state.facingMode }, width: { ideal: 1280 }, height: { ideal: 720 } },
+                        audio: false
+                    });
+                }
+
+                videoEl.srcObject = stream;
+                await videoEl.play().catch(() => {});
+                state.cameraActive = true;
+                
+                const btn = document.getElementById('btnToggleCam');
+                btn.innerHTML = '<i class="fa-solid fa-stop mr-1"></i>停止';
+                btn.className = 'px-4 py-2 rounded-full bg-zinc-700 font-bold text-xs active:scale-95 transition text-white border border-zinc-600';
+                
+                await initSegmenterIfNeeded();
+                showToast('📷 カメラを起動しました！');
+            } catch (err) {
+                state.cameraActive = false;
+                showToast('カメラの起動に失敗しました。カメラ権限を許可してください');
+            }
+        }
+
+        function toggleBgRemoval(checked) {
+            state.person.useBgRemoval = checked;
+            showToast(checked ? '人物の自動切り抜きをONにしました' : '背景切り抜きをOFFにしました');
+        }
+
+        function setPersonMode(mode) {
+            state.person.mode = mode;
+            const shapeOpts = document.getElementById('pipShapeOptions');
+            const btnFull = document.getElementById('btnModeFull');
+            const btnPip = document.getElementById('btnModePip');
+            const quickLbl = document.getElementById('quickPipLabel');
+
+            if (mode === 'full') {
+                btnFull.className = 'py-2.5 rounded-xl bg-blue-600 font-bold text-xs sm:text-sm border-2 border-blue-400 shadow-lg text-white';
+                btnPip.className = 'py-2.5 rounded-xl bg-zinc-800 font-bold text-xs sm:text-sm text-zinc-300 border-2 border-transparent hover:bg-zinc-700';
+                shapeOpts.classList.add('hidden');
+                if (quickLbl) quickLbl.textContent = '全画面';
+                showToast('全画面モード：2本指ピンチでズーム、1本指で位置移動できます');
+            } else {
+                btnPip.className = 'py-2.5 rounded-xl bg-blue-600 font-bold text-xs sm:text-sm border-2 border-blue-400 shadow-lg text-white';
+                btnFull.className = 'py-2.5 rounded-xl bg-zinc-800 font-bold text-xs sm:text-sm text-zinc-300 border-2 border-transparent hover:bg-zinc-700';
+                shapeOpts.classList.remove('hidden');
+                setPipShape(state.person.shape);
+                if (quickLbl) quickLbl.textContent = state.person.shape === 'circle' ? '小窓〇' : '小窓□';
+                showToast('小窓モード：1本指ドラッグで小窓を移動できます');
+            }
+        }
+
+        function quickTogglePip() {
+            if (state.person.mode === 'full') {
+                state.person.shape = 'square';
+                setPersonMode('pip');
+            } else if (state.person.mode === 'pip' && state.person.shape === 'square') {
+                setPipShape('circle');
+                const quickLbl = document.getElementById('quickPipLabel');
+                if (quickLbl) quickLbl.textContent = '小窓〇';
+                showToast('小窓を「〇 丸」に切り替えました');
+            } else {
+                setPersonMode('full');
+            }
+        }
+
+        function stepCameraZoom(delta) {
+            const next = Math.max(0.25, Math.min(3.0, +(state.person.zoom + delta).toFixed(2)));
+            updateCameraZoom(next);
+        }
+
+        function setPipShape(shape) {
+            state.person.shape = shape;
+            const map = {
+                square: 'btnShapeSq',
+                circle: 'btnShapeCirc',
+                rectangle: 'btnShapeRect'
+            };
+            Object.keys(map).forEach(k => {
+                const el = document.getElementById(map[k]);
+                if (!el) return;
+                if (k === shape) {
+                    el.className = 'py-2 rounded-lg bg-blue-600 border-2 border-blue-400 text-xs font-bold shadow text-white';
+                } else {
+                    el.className = 'py-2 rounded-lg bg-zinc-900 border-2 border-transparent hover:bg-zinc-700 text-xs font-bold text-zinc-300';
+                }
+            });
+            const quickLbl = document.getElementById('quickPipLabel');
+            if (quickLbl && state.person.mode === 'pip') {
+                quickLbl.textContent = shape === 'circle' ? '小窓〇' : '小窓□';
+            }
+        }
+
+        function updatePipSize(val) {
+            const num = parseFloat(val) || 0.45;
+            state.person.pipScale = num;
+            document.getElementById('pipSizeValue').textContent = Math.round(num * 100) + '%';
+        }
+
+        function updateCameraZoom(val) {
+            const num = Math.max(0.25, Math.min(3.0, parseFloat(val) || 1.0));
+            state.person.zoom = num;
+            const pctText = Math.round(num * 100) + '%';
+            document.getElementById('zoomValue').textContent = pctText;
+            document.getElementById('personZoom').value = num;
+            const badge = document.getElementById('quickZoomBadge');
+            if (badge) badge.textContent = pctText;
+        }
+
+        function resetCameraTransform() {
+            state.person.zoom = 1.0;
+            state.person.panX = 0;
+            state.person.panY = 0;
+            state.person.pipX = 520;
+            state.person.pipY = 940;
+            state.person.pipScale = 0.45;
+            document.getElementById('personZoom').value = 1.0;
+            document.getElementById('zoomValue').textContent = '100%';
+            const badge = document.getElementById('quickZoomBadge');
+            if (badge) badge.textContent = '100%';
+            document.getElementById('pipSizeSlider').value = 0.45;
+            document.getElementById('pipSizeValue').textContent = '45%';
+            showToast('カメラの位置とズームをリセットしました');
+        }
+
+        async function generateAIBackground() {
+            const prompt = document.getElementById('bgPrompt').value.trim();
+            if (!prompt) {
+                showToast("背景のイメージを入力してください");
+                return;
+            }
+            
+            const btn = document.getElementById('btnGenBg');
+            const origHtml = btn.innerHTML;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> AI背景を生成中...';
+            btn.disabled = true;
+            showToast("AIが背景を生成しています...");
+
+            try {
+                let b64Data = null;
+                let mimeType = 'image/png';
+
+                const endpoints = [
+                    {
+                        url: `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`,
+                        body: {
+                            instances: [{ prompt: `Vertical 9:16 YouTube Shorts background illustration, ${prompt}, vibrant, high quality, no text` }],
+                            parameters: { sampleCount: 1, aspectRatio: "9:16" }
+                        },
+                        extract: (d) => d?.predictions?.[0]?.bytesBase64Encoded
+                    },
+                    {
+                        url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image-preview:generateContent?key=${apiKey}`,
+                        body: {
+                            contents: [{ parts: [{ text: `Generate a vertical 9:16 background image for YouTube Shorts: ${prompt}. Vibrant, detailed, no text.` }] }],
+                            generationConfig: { responseModalities: ["IMAGE"] }
+                        },
+                        extract: (d) => d?.candidates?.[0]?.content?.parts?.find(p => p.inlineData)?.inlineData?.data
+                    }
+                ];
+
+                for (const ep of endpoints) {
+                    try {
+                        const res = await fetch(ep.url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(ep.body)
+                        });
+                        if (res.ok) {
+                            const data = await res.json();
+                            const extracted = ep.extract(data);
+                            if (extracted) {
+                                b64Data = extracted;
+                                break;
+                            }
+                        }
+                    } catch (err) {}
+                }
+
+                if (b64Data) {
+                    const img = new Image();
+                    img.onload = () => {
+                        state.bgImage = img;
+                        showToast("✨ AI背景が完成しました！");
+                        closePanel();
+                    };
+                    img.src = `data:${mimeType};base64,${b64Data}`;
+                    return;
+                }
+
+                const svgUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+                const svgPayload = {
+                    contents: [{
+                        parts: [{
+                            text: `Create a rich, atmospheric, detailed SVG illustration for a vertical 9:16 background (width="720" height="1280" viewBox="0 0 720 1280") matching this theme: "${prompt}". Use gradients, glowing lights, layered scenery, and rich colors. Output ONLY raw <svg>...</svg> code without markdown backticks.`
+                        }]
+                    }]
+                };
+                const svgRes = await fetch(svgUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(svgPayload)
+                });
+
+                if (svgRes.ok) {
+                    const svgJson = await svgRes.json();
+                    let rawSvg = svgJson?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                    const match = rawSvg.match(/<svg[\s\S]*?<\/svg>/i);
+                    if (match) {
+                        const svgBlob = new Blob([match[0]], { type: 'image/svg+xml;charset=utf-8' });
+                        const url = URL.createObjectURL(svgBlob);
+                        const img = new Image();
+                        img.onload = () => {
+                            state.bgImage = img;
+                            URL.revokeObjectURL(url);
+                            showToast("✨ AI背景が完成しました！");
+                            closePanel();
+                        };
+                        img.src = url;
+                        return;
+                    }
+                }
+
+                state.bgImage = createProceduralAIBackground(prompt);
+                showToast("✨ 背景を生成しました！");
+                closePanel();
+            } catch (e) {
+                state.bgImage = createProceduralAIBackground(prompt);
+                showToast("✨ 背景を生成しました！");
+                closePanel();
+            } finally {
+                btn.innerHTML = origHtml;
+                btn.disabled = false;
+            }
+        }
+
+        function createProceduralAIBackground(prompt) {
+            const c = document.createElement('canvas');
+            c.width = 720;
+            c.height = 1280;
+            const gctx = c.getContext('2d');
+            let hash = 0;
+            for (let i = 0; i < prompt.length; i++) {
+                hash = prompt.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            const h1 = Math.abs(hash % 360);
+            const h2 = (h1 + 65) % 360;
+            const h3 = (h1 + 195) % 360;
+
+            const grad = gctx.createLinearGradient(0, 0, 720, 1280);
+            grad.addColorStop(0, `hsl(${h1}, 75%, 16%)`);
+            grad.addColorStop(0.5, `hsl(${h2}, 80%, 24%)`);
+            grad.addColorStop(1, `hsl(${h3}, 85%, 12%)`);
+            gctx.fillStyle = grad;
+            gctx.fillRect(0, 0, 720, 1280);
+
+            for (let i = 0; i < 35; i++) {
+                const rx = (Math.abs(Math.sin(hash + i * 12.3)) * 720);
+                const ry = (Math.abs(Math.cos(hash + i * 7.7)) * 1280);
+                const rad = 40 + (i % 6) * 45;
+                const rg = gctx.createRadialGradient(rx, ry, 5, rx, ry, rad);
+                rg.addColorStop(0, `hsla(${(h1 + i * 18) % 360}, 95%, 65%, 0.35)`);
+                rg.addColorStop(1, 'rgba(0,0,0,0)');
+                gctx.fillStyle = rg;
+                gctx.beginPath();
+                gctx.arc(rx, ry, rad, 0, Math.PI * 2);
+                gctx.fill();
+            }
+            return c;
+        }
+
+        function clearBackground() {
+            state.bgImage = null;
+            showToast("背景を初期状態に戻しました");
+        }
+        
+        function uploadLocalBackground(e) {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            const img = new Image();
+            img.onload = () => {
+                state.bgImage = img;
+                showToast("画像を背景に設定しました");
+                closePanel();
+            };
+            img.src = URL.createObjectURL(file);
+        }
+
+        let draftTextId = null;
+
+        function liveTypePreview(val) {
+            const trimmed = val.trim();
+            if (!trimmed) {
+                if (draftTextId !== null) {
+                    const idx = state.texts.findIndex(t => t.id === draftTextId);
+                    if (idx !== -1) state.texts.splice(idx, 1);
+                    draftTextId = null;
+                    state.selectedTextIdx = state.texts.length - 1;
+                }
+                return;
+            }
+
+            if (draftTextId !== null) {
+                const existing = state.texts.find(t => t.id === draftTextId);
+                if (existing) {
+                    existing.text = trimmed;
+                    return;
+                }
+            }
+
+            const newId = Date.now();
+            draftTextId = newId;
+            state.texts.push({
+                id: newId,
+                text: trimmed,
+                x: 360,
+                y: 240 + ((state.texts.length * 95) % 650),
+                font: document.getElementById('fontSelect').value,
+                color: document.getElementById('textColor').value,
+                stroke: document.getElementById('strokeColor').value,
+                size: parseInt(document.getElementById('textSizeSlider').value, 10) || 60,
+                hitW: 200,
+                hitH: 80
+            });
+            state.selectedTextIdx = state.texts.length - 1;
+        }
+
+        function addText() {
+            const input = document.getElementById('textInput');
+            const val = input.value.trim();
+            if (!val) {
+                showToast("上の入力欄に文字を入力してください");
+                input.focus();
+                return;
+            }
+
+            if (draftTextId === null) {
+                liveTypePreview(val);
+            }
+
+            // 現在の文字を確定し、次の文字を入力できるように入力欄を空にする
+            draftTextId = null;
+            input.value = '';
+            input.blur();
+            closePanel();
+            showToast("✨ 文字を画面に配置しました！指でドラッグして位置を動かせます");
+        }
+
+        function updateSelectedTextStyle() {
+            if (state.selectedTextIdx < 0 || !state.texts[state.selectedTextIdx]) return;
+            const t = state.texts[state.selectedTextIdx];
+            t.font = document.getElementById('fontSelect').value;
+            t.color = document.getElementById('textColor').value;
+            t.stroke = document.getElementById('strokeColor').value;
+            t.size = parseInt(document.getElementById('textSizeSlider').value, 10) || 60;
+        }
+
+        function clearTexts() {
+            state.texts = [];
+            state.selectedTextIdx = -1;
+            showToast("すべての文字を消去しました");
+        }
+
+        function toggleSpeechRecognition(enabled) {
+            state.speechEnabled = enabled;
+            if (!enabled) {
+                if (state.recognizer) {
+                    try { state.recognizer.stop(); } catch (e) {}
+                }
+                state.liveCaption = "";
+                showToast("音声字幕をOFFにしました");
+                return;
+            }
+
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            if (!SpeechRecognition) {
+                showToast("お使いのブラウザは音声認識に対応していません（Chrome/Safari推奨）");
+                document.getElementById('liveCaptionToggle').checked = false;
+                state.speechEnabled = false;
+                return;
+            }
+
+            const rec = new SpeechRecognition();
+            rec.lang = 'ja-JP';
+            rec.continuous = true;
+            rec.interimResults = true;
+            rec.onresult = (e) => {
+                let transcript = '';
+                for (let i = e.resultIndex; i < e.results.length; i++) {
+                    transcript += e.results[i][0].transcript;
+                }
+                state.liveCaption = transcript;
+                
+                clearTimeout(state.captionTimer);
+                state.captionTimer = setTimeout(() => {
+                    state.liveCaption = "";
+                }, 3500);
+            };
+            rec.onend = () => {
+                if (state.speechEnabled) {
+                    try { rec.start(); } catch (e) {}
+                }
+            };
+            
+            try { 
+                rec.start(); 
+                state.recognizer = rec;
+                showToast("🎙️ 音声字幕を開始しました！マイクに向かって話してみてください");
+                closePanel();
+            } catch (e) {}
+        }
+
+        let dragInfo = null;
+        let pinchInfo = null;
+
+        function getPointCoords(clientX, clientY) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: ((clientX - rect.left) / rect.width) * 720,
+                y: ((clientY - rect.top) / rect.height) * 1280
+            };
+        }
+
+        function startSingleDrag(clientX, clientY) {
+            const pos = getPointCoords(clientX, clientY);
+
+            // 1. テキストの当たり判定
+            for (let i = state.texts.length - 1; i >= 0; i--) {
+                const t = state.texts[i];
+                if (Math.abs(pos.x - t.x) < t.hitW / 2 + 28 && Math.abs(pos.y - t.y) < t.hitH / 2 + 28) {
+                    state.selectedTextIdx = i;
+                    document.getElementById('fontSelect').value = t.font;
+                    document.getElementById('textColor').value = t.color;
+                    document.getElementById('strokeColor').value = t.stroke;
+                    document.getElementById('textSizeSlider').value = t.size || 60;
+                    dragInfo = {
+                        type: 'text',
+                        idx: i,
+                        startX: pos.x,
+                        startY: pos.y,
+                        origX: t.x,
+                        origY: t.y
+                    };
+                    return;
+                }
+            }
+
+            // 2. 小窓モード時の小窓枠ドラッグ判定
+            if (state.person.mode === 'pip') {
+                const winW = 720 * state.person.pipScale;
+                const winH = (state.person.shape === 'rectangle' ? 1280 : 720) * state.person.pipScale;
+                if (Math.abs(pos.x - state.person.pipX) <= winW / 2 + 30 && Math.abs(pos.y - state.person.pipY) <= winH / 2 + 30) {
+                    dragInfo = {
+                        type: 'pip',
+                        startX: pos.x,
+                        startY: pos.y,
+                        origX: state.person.pipX,
+                        origY: state.person.pipY
+                    };
+                    return;
+                }
+            }
+
+            // 3. カメラ映像のパン（上下左右の位置移動）
+            dragInfo = {
+                type: 'pan',
+                startX: pos.x,
+                startY: pos.y,
+                origX: state.person.panX,
+                origY: state.person.panY
+            };
+        }
+
+        function moveSingleDrag(clientX, clientY) {
+            if (!dragInfo) return;
+            const pos = getPointCoords(clientX, clientY);
+            const dx = pos.x - dragInfo.startX;
+            const dy = pos.y - dragInfo.startY;
+
+            if (dragInfo.type === 'text') {
+                const t = state.texts[dragInfo.idx];
+                if (t) {
+                    t.x = dragInfo.origX + dx;
+                    t.y = dragInfo.origY + dy;
+                }
+            } else if (dragInfo.type === 'pip') {
+                state.person.pipX = Math.max(60, Math.min(660, dragInfo.origX + dx));
+                state.person.pipY = Math.max(60, Math.min(1220, dragInfo.origY + dy));
+            } else if (dragInfo.type === 'pan') {
+                state.person.panX = dragInfo.origX + dx;
+                state.person.panY = dragInfo.origY + dy;
+            }
+        }
+
+        // スマホのタッチ操作（1本指ドラッグ ＆ 2本指ピンチズーム）
+        canvas.addEventListener('touchstart', (e) => {
+            if (e.touches.length === 2) {
+                e.preventDefault();
+                dragInfo = null;
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                pinchInfo = {
+                    startDist: Math.hypot(dx, dy) || 1,
+                    startZoom: state.person.zoom
+                };
+            } else if (e.touches.length === 1) {
+                e.preventDefault();
+                pinchInfo = null;
+                startSingleDrag(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (e.touches.length === 2 && pinchInfo) {
+                e.preventDefault();
+                const dx = e.touches[0].clientX - e.touches[1].clientX;
+                const dy = e.touches[0].clientY - e.touches[1].clientY;
+                const dist = Math.hypot(dx, dy) || 1;
+                const scaleRatio = dist / pinchInfo.startDist;
+                updateCameraZoom(pinchInfo.startZoom * scaleRatio);
+            } else if (e.touches.length === 1 && dragInfo) {
+                e.preventDefault();
+                moveSingleDrag(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            if (e.touches.length < 2) pinchInfo = null;
+            if (e.touches.length === 0) dragInfo = null;
+        });
+
+        // PCプレビュー用のマウス操作にも対応
+        canvas.addEventListener('mousedown', (e) => {
+            startSingleDrag(e.clientX, e.clientY);
+        });
+        window.addEventListener('mousemove', (e) => {
+            if (dragInfo) moveSingleDrag(e.clientX, e.clientY);
+        });
+        window.addEventListener('mouseup', () => {
+            dragInfo = null;
+        });
+
+        function renderStyledText(ctx, text, x, y, font, color, stroke, size) {
+            ctx.save();
+            ctx.font = `900 ${size}px "${font}", sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.lineJoin = 'round';
+            ctx.lineWidth = size * 0.24;
+            ctx.strokeStyle = stroke;
+            ctx.strokeText(text, x, y);
+            ctx.fillStyle = color;
+            ctx.fillText(text, x, y);
+            const width = ctx.measureText(text).width;
+            ctx.restore();
+            return width;
+        }
+
+        function drawLoop() {
+            const now = performance.now();
+
+            // 1. 背景描画
+            ctx.clearRect(0, 0, 720, 1280);
+            if (state.bgImage) {
+                const imgW = state.bgImage.width || 720;
+                const imgH = state.bgImage.height || 1280;
+                const rImg = imgW / imgH;
+                const rCan = 720 / 1280;
+                let dw = 720, dh = 1280, dx = 0, dy = 0;
+                if (rImg > rCan) {
+                    dw = 1280 * rImg;
+                    dx = (720 - dw) / 2;
+                } else {
+                    dh = 720 / rImg;
+                    dy = (1280 - dh) / 2;
+                }
+                ctx.drawImage(state.bgImage, dx, dy, dw, dh);
+            } else {
+                const grad = ctx.createLinearGradient(0, 0, 0, 1280);
+                grad.addColorStop(0, '#27272a');
+                grad.addColorStop(1, '#09090b');
+                ctx.fillStyle = grad;
+                ctx.fillRect(0, 0, 720, 1280);
+            }
+
+            // 2. カメラ映像＆継続的な人物切り抜き描画
+            if (state.cameraActive && videoEl.readyState >= 2 && videoEl.videoWidth > 0) {
+                const vw = videoEl.videoWidth;
+                const vh = videoEl.videoHeight;
+
+                if (isSegmenting && now - lastSegmentTime > 500) {
+                    isSegmenting = false;
+                }
+                if (state.person.useBgRemoval && segmenter && !isSegmenting) {
+                    processSegmentationFrame();
+                }
+
+                if (rawPersonCanvas.width !== vw || rawPersonCanvas.height !== vh) {
+                    rawPersonCanvas.width = vw;
+                    rawPersonCanvas.height = vh;
+                }
+                rawPersonCtx.clearRect(0, 0, vw, vh);
+                rawPersonCtx.drawImage(videoEl, 0, 0, vw, vh);
+
+                if (state.person.useBgRemoval && hasMask) {
+                    rawPersonCtx.save();
+                    rawPersonCtx.globalCompositeOperation = 'destination-in';
+                    rawPersonCtx.drawImage(maskCanvas, 0, 0, vw, vh);
+                    rawPersonCtx.restore();
+                }
+
+                const rVid = vw / vh;
+                let baseW = 720;
+                let baseH = 720 / rVid;
+                if (baseH < 640) {
+                    baseH = 640;
+                    baseW = 640 * rVid;
+                }
+
+                ctx.save();
+                if (state.person.mode === 'full') {
+                    ctx.translate(360 + state.person.panX, 640 + state.person.panY);
+                    if (state.facingMode === 'user') {
+                        ctx.scale(-1, 1);
+                    }
+                    ctx.scale(state.person.zoom, state.person.zoom);
+                    ctx.drawImage(rawPersonCanvas, -baseW / 2, -baseH / 2, baseW, baseH);
+                } else {
+                    const winW = 720 * state.person.pipScale;
+                    const winH = (state.person.shape === 'rectangle' ? 1280 : 720) * state.person.pipScale;
+
+                    ctx.translate(state.person.pipX, state.person.pipY);
+
+                    ctx.beginPath();
+                    if (state.person.shape === 'circle') {
+                        ctx.arc(0, 0, winW / 2, 0, Math.PI * 2);
+                    } else if (state.person.shape === 'square') {
+                        ctx.roundRect(-winW / 2, -winH / 2, winW, winH, 28);
+                    } else {
+                        ctx.roundRect(-winW / 2, -winH / 2, winW, winH, 28);
+                    }
+
+                    ctx.save();
+                    ctx.clip();
+
+                    const fitScale = Math.max(winW / baseW, winH / baseH) * state.person.zoom;
+                    const drawW = baseW * fitScale;
+                    const drawH = baseH * fitScale;
+
+                    ctx.translate(state.person.panX * state.person.pipScale, state.person.panY * state.person.pipScale);
+                    if (state.facingMode === 'user') {
+                        ctx.scale(-1, 1);
+                    }
+                    ctx.drawImage(rawPersonCanvas, -drawW / 2, -drawH / 2, drawW, drawH);
+                    ctx.restore();
+
+                    if (state.person.pipBorder) {
+                        ctx.lineWidth = 6;
+                        ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+                        ctx.stroke();
+                    }
+                }
+                ctx.restore();
+            }
+
+            // 3. テキスト描画
+            state.texts.forEach((t, idx) => {
+                const w = renderStyledText(ctx, t.text, t.x, t.y, t.font, t.color, t.stroke, t.size || 60);
+                t.hitW = w;
+                t.hitH = (t.size || 60) * 1.3;
+
+                if (idx === state.selectedTextIdx && !state.isRecording) {
+                    ctx.save();
+                    ctx.setLineDash([8, 6]);
+                    ctx.strokeStyle = '#eab308';
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(t.x - t.hitW / 2 - 12, t.y - t.hitH / 2 - 8, t.hitW + 24, t.hitH + 16);
+                    ctx.restore();
+                }
+            });
+
+            // 4. 音声認識の自動字幕描画
+            if (state.speechEnabled && state.liveCaption) {
+                const font = document.getElementById('fontSelect').value || 'M PLUS Rounded 1c';
+                const color = document.getElementById('textColor').value || '#ffffff';
+                const stroke = document.getElementById('strokeColor').value || '#000000';
+                renderStyledText(ctx, state.liveCaption, 360, 1120, font, color, stroke, 50);
+            }
+
+            // 5. 録画タイマー更新
+            if (state.isRecording) {
+                const sec = Math.floor((now - state.recordStartTime) / 1000);
+                const m = String(Math.floor(sec / 60)).padStart(2, '0');
+                const s = String(sec % 60).padStart(2, '0');
+                document.getElementById('recTimer').textContent = `${m}:${s}`;
+            }
+
+            requestAnimationFrame(drawLoop);
+        }
+
+        let mediaRecorder;
+        let recordedChunks = [];
+
+        function toggleRecording() {
+            if (!state.isRecording) {
+                const stream = canvas.captureStream(30);
+                if (videoEl.srcObject && state.cameraActive) {
+                    const audioTracks = videoEl.srcObject.getAudioTracks();
+                    if (audioTracks.length > 0) stream.addTrack(audioTracks[0]);
+                }
+
+                recordedChunks = [];
+                const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus') ? 'video/webm;codecs=vp9,opus' : 'video/webm';
+                
+                try {
+                    mediaRecorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 5000000 });
+                    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) recordedChunks.push(e.data); };
+                    mediaRecorder.onstop = () => {
+                        const blob = new Blob(recordedChunks, { type: mime });
+                        const url = URL.createObjectURL(blob);
+                        document.getElementById('previewVideo').src = url;
+                        document.getElementById('downloadBtn').href = url;
+                        document.getElementById('exportModal').classList.remove('hidden');
+                    };
+
+                    mediaRecorder.start(200);
+                    state.isRecording = true;
+                    state.recordStartTime = performance.now();
+                    
+                    closePanel();
+                    document.getElementById('quickTouchControls')?.classList.add('hidden');
+                    document.getElementById('recordInner').classList.replace('w-12', 'w-6');
+                    document.getElementById('recordInner').classList.replace('h-12', 'h-6');
+                    document.getElementById('recordInner').classList.replace('rounded-full', 'rounded-lg');
+                    document.getElementById('recordBtn').classList.add('pulse-record');
+                    document.getElementById('recBadge').classList.remove('hidden');
+                    showToast('🔴 Shortsの録画を開始しました！');
+                } catch (e) {
+                    showToast("このブラウザ環境では録画機能がサポートされていません");
+                }
+            } else {
+                mediaRecorder.stop();
+                state.isRecording = false;
+                
+                document.getElementById('quickTouchControls')?.classList.remove('hidden');
+                document.getElementById('recordInner').classList.replace('w-6', 'w-12');
+                document.getElementById('recordInner').classList.replace('h-6', 'h-12');
+                document.getElementById('recordInner').classList.replace('rounded-lg', 'rounded-full');
+                document.getElementById('recordBtn').classList.remove('pulse-record');
+                document.getElementById('recBadge').classList.add('hidden');
+            }
+        }
+
+        window.onload = () => {
+            requestAnimationFrame(drawLoop);
+            showToast("ShortsStudioへようこそ！「カメラON」で撮影を始められます");
+        };
+    </script>
+</body>
+</html>
